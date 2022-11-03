@@ -139,7 +139,7 @@ func TestDeterminePulumiPackages(t *testing.T) {
 		cwd := t.TempDir()
 		_, err := runPythonCommand(context.Background(), "", cwd, "-m", "venv", "venv")
 		assert.NoError(t, err)
-		_, err = runPythonCommand(context.Background(), "venv", cwd, "-m", "pip", "install", "pulumi-random")
+		_, err = runPythonCommand(context.Background(), "venv", cwd, "-m", "pip", "install", "pulumi-random", "--use-pep517")
 		assert.NoError(t, err)
 		_, err = runPythonCommand(context.Background(), "venv", cwd, "-m", "pip", "install", "pip-install-test")
 		assert.NoError(t, err)
