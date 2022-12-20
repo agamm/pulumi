@@ -21,11 +21,85 @@ import (
 	"path"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/pulumi/pulumi/pkg/v3/codegen/hcl2/model"
 	"github.com/pulumi/pulumi/pkg/v3/codegen/pcl"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
 	"github.com/zclconf/go-cty/cty"
 )
+
+func transformTraversal(traversal hcl.Traversal) []interface{} {
+	result := make([]interface{}, 0)
+	for _, part := range traversal {
+		switch part := part.(type) {
+		case hcl.TraverseAttr:
+			result = append(result, map[string]interface{}{
+				"type": "TraverseAttr",
+				"name": part.Name,
+			})
+		case hcl.TraverseIndex:
+			index, _ := part.Key.AsBigFloat().Int64()
+			result = append(result, map[string]interface{}{
+				"type": "TraverseIndex",
+				"key":  index,
+			})
+		case hcl.TraverseRoot:
+			result = append(result, map[string]interface{}{
+				"type": "TraverseRoot",
+				"name": part.Name,
+			})
+
+		case hcl.TraverseSplat:
+			result = append(result, map[string]interface{}{
+				"type": "TraverseSplat",
+				"each": transformTraversal(part.Each),
+			})
+		}
+	}
+
+	return result
+}
+
+func tranformFunctionParameters(parameters []*model.Variable) []string {
+	result := make([]string, len(parameters))
+	for i, parameter := range parameters {
+		result[i] = parameter.Name
+	}
+	return result
+}
+
+func formatOperation(operation *hclsyntax.Operation) string {
+	switch operation {
+	case hclsyntax.OpAdd:
+		return "Add"
+	case hclsyntax.OpDivide:
+		return "Divide"
+	case hclsyntax.OpEqual:
+		return "Equal"
+	case hclsyntax.OpGreaterThan:
+		return "GreaterThan"
+	case hclsyntax.OpGreaterThanOrEqual:
+		return "GreaterThanOrEqual"
+	case hclsyntax.OpLessThan:
+		return "LessThan"
+	case hclsyntax.OpLessThanOrEqual:
+		return "LessThanOrEqual"
+	case hclsyntax.OpLogicalAnd:
+		return "LogicalAnd"
+	case hclsyntax.OpLogicalOr:
+		return "LogicalOr"
+	case hclsyntax.OpModulo:
+		return "Modulo"
+	case hclsyntax.OpMultiply:
+		return "Multiply"
+	case hclsyntax.OpNotEqual:
+		return "NotEqual"
+	case hclsyntax.OpSubtract:
+		return "Subtract"
+	}
+
+	return ""
+}
 
 func transformExpression(expr model.Expression) map[string]interface{} {
 	switch expr.(type) {
@@ -48,8 +122,13 @@ func transformExpression(expr model.Expression) map[string]interface{} {
 			"type":  "LiteralValueExpression",
 			"value": value,
 		}
+
 	case *model.TemplateExpression:
 		templateExpression := expr.(*model.TemplateExpression)
+		if len(templateExpression.Parts) == 1 {
+			return transformExpression(templateExpression.Parts[0])
+		}
+
 		parts := make([]interface{}, len(templateExpression.Parts))
 		for i, part := range templateExpression.Parts {
 			parts[i] = transformExpression(part)
@@ -58,6 +137,7 @@ func transformExpression(expr model.Expression) map[string]interface{} {
 			"type":  "TemplateExpression",
 			"parts": parts,
 		}
+
 	case *model.IndexExpression:
 		indexExpr := expr.(*model.IndexExpression)
 		return map[string]interface{}{
@@ -65,6 +145,7 @@ func transformExpression(expr model.Expression) map[string]interface{} {
 			"collection": transformExpression(indexExpr.Collection),
 			"key":        transformExpression(indexExpr.Key),
 		}
+
 	case *model.ObjectConsExpression:
 		objectExpr := expr.(*model.ObjectConsExpression)
 		properties := make(map[string]interface{})
@@ -78,6 +159,7 @@ func transformExpression(expr model.Expression) map[string]interface{} {
 			"type":       "ObjectConsExpression",
 			"properties": properties,
 		}
+
 	case *model.TupleConsExpression:
 		tupleExpr := expr.(*model.TupleConsExpression)
 		items := make([]interface{}, len(tupleExpr.Expressions))
@@ -103,56 +185,80 @@ func transformExpression(expr model.Expression) map[string]interface{} {
 
 	case *model.RelativeTraversalExpression:
 		traversalExpr := expr.(*model.RelativeTraversalExpression)
-		traversal := make([]interface{}, 0)
-		for _, part := range traversalExpr.Traversal {
-			switch part := part.(type) {
-			case hcl.TraverseAttr:
-				traversal = append(traversal, map[string]interface{}{
-					"type": "TraverseAttr",
-					"name": part.Name,
-				})
-			case hcl.TraverseIndex:
-				index, _ := part.Key.AsBigFloat().Int64()
-				traversal = append(traversal, map[string]interface{}{
-					"type": "TraverseIndex",
-					"key":  index,
-				})
-			}
-		}
 		return map[string]interface{}{
 			"type":      "RelativeTraversalExpression",
 			"source":    transformExpression(traversalExpr.Source),
-			"traversal": traversal,
+			"traversal": transformTraversal(traversalExpr.Traversal),
 		}
 
 	case *model.ScopeTraversalExpression:
 		traversalExpr := expr.(*model.ScopeTraversalExpression)
-		traversal := make([]interface{}, 0)
-		for _, part := range traversalExpr.Traversal {
-			switch part := part.(type) {
-			case hcl.TraverseAttr:
-				traversal = append(traversal, map[string]interface{}{
-					"type": "TraverseAttr",
-					"name": part.Name,
-				})
-			case hcl.TraverseIndex:
-				index, _ := part.Key.AsBigFloat().Int64()
-				traversal = append(traversal, map[string]interface{}{
-					"type": "TraverseIndex",
-					"key":  index,
-				})
-			}
-		}
-
 		return map[string]interface{}{
 			"type":      "ScopeTraversalExpression",
 			"rootName":  traversalExpr.RootName,
-			"traversal": traversal,
+			"traversal": transformTraversal(traversalExpr.Traversal),
+		}
+
+	case *model.AnonymousFunctionExpression:
+		funcExpr := expr.(*model.AnonymousFunctionExpression)
+		return map[string]interface{}{
+			"type":       "AnonymousFunctionExpression",
+			"parameters": tranformFunctionParameters(funcExpr.Parameters),
+			"body":       transformExpression(funcExpr.Body),
+		}
+
+	case *model.ConditionalExpression:
+		condExpr := expr.(*model.ConditionalExpression)
+		return map[string]interface{}{
+			"type":      "ConditionalExpression",
+			"condition": transformExpression(condExpr.Condition),
+			"trueExpr":  transformExpression(condExpr.TrueResult),
+			"falseExpr": transformExpression(condExpr.FalseResult),
+		}
+
+	case *model.BinaryOpExpression:
+		binaryExpr := expr.(*model.BinaryOpExpression)
+		return map[string]interface{}{
+			"type":      "BinaryOpExpression",
+			"operation": formatOperation(binaryExpr.Operation),
+			"left":      transformExpression(binaryExpr.LeftOperand),
+			"right":     transformExpression(binaryExpr.RightOperand),
+		}
+
+	case *model.UnaryOpExpression:
+		unaryExpr := expr.(*model.UnaryOpExpression)
+		return map[string]interface{}{
+			"type":      "UnaryOpExpression",
+			"operation": formatOperation(unaryExpr.Operation),
+			"operand":   transformExpression(unaryExpr.Operand),
 		}
 
 	default:
 		return nil
 	}
+}
+
+func transformResourceOptions(options *pcl.ResourceOptions) map[string]interface{} {
+	optionsJSON := make(map[string]interface{})
+	if options.DependsOn != nil {
+		optionsJSON["dependsOn"] = transformExpression(options.DependsOn)
+	}
+	if options.IgnoreChanges != nil {
+		optionsJSON["ignoreChanges"] = transformExpression(options.IgnoreChanges)
+	}
+	if options.Parent != nil {
+		optionsJSON["parent"] = transformExpression(options.Parent)
+	}
+	if options.Protect != nil {
+		optionsJSON["protect"] = transformExpression(options.Protect)
+	}
+	if options.Provider != nil {
+		optionsJSON["provider"] = transformExpression(options.Provider)
+	}
+	if options.Version != nil {
+		optionsJSON["version"] = transformExpression(options.Version)
+	}
+	return optionsJSON
 }
 
 func transformResource(resource *pcl.Resource) map[string]interface{} {
@@ -161,11 +267,15 @@ func transformResource(resource *pcl.Resource) map[string]interface{} {
 	resourceJSON["name"] = resource.Name()
 	resourceJSON["token"] = resource.Token
 	resourceJSON["logicalName"] = resource.LogicalName()
-	attributes := make(map[string]interface{})
+	inputs := make(map[string]interface{})
 	for _, attr := range resource.Inputs {
-		attributes[attr.Name] = transformExpression(attr.Value)
+		inputs[attr.Name] = transformExpression(attr.Value)
 	}
-	resourceJSON["attributes"] = attributes
+	resourceJSON["inputs"] = inputs
+	if resource.Options != nil {
+		resourceJSON["options"] = transformResourceOptions(resource.Options)
+	}
+
 	return resourceJSON
 }
 
@@ -190,16 +300,29 @@ func transformOutput(output *pcl.OutputVariable) map[string]interface{} {
 func transformConfigVariable(variable *pcl.ConfigVariable) map[string]interface{} {
 	variableJSON := make(map[string]interface{})
 	variableJSON["type"] = "ConfigVariable"
-	variableJSON["configType"] = variable.Definition.Type
+	variableJSON["defaultValue"] = transformExpression(variable.DefaultValue)
 	variableJSON["name"] = variable.Name()
 	variableJSON["logicalName"] = variable.LogicalName()
+	switch variable.Type() {
+	case model.StringType:
+		variableJSON["configType"] = "string"
+	case model.NumberType:
+		variableJSON["configType"] = "number"
+	case model.IntType:
+		variableJSON["configType"] = "int"
+	case model.BoolType:
+		variableJSON["configType"] = "bool"
+	default:
+		variableJSON["configType"] = "unknown"
+	}
+
 	return variableJSON
 }
 
 func transformProgram(program *pcl.Program) map[string]interface{} {
 	programJSON := make(map[string]interface{})
 	nodes := make([]interface{}, 0, len(program.Nodes))
-	packages := make([]interface{}, 0, len(program.Packages()))
+	plugins := make([]interface{}, 0, len(program.Packages()))
 	for _, node := range program.Nodes {
 		switch node := node.(type) {
 		case *pcl.Resource:
@@ -218,16 +341,16 @@ func transformProgram(program *pcl.Program) map[string]interface{} {
 	}
 
 	for _, pkg := range program.Packages() {
-		packageDef := map[string]interface{}{
+		pluginRef := map[string]interface{}{
 			"name":    pkg.Name,
 			"version": pkg.Version,
 		}
 
-		packages = append(packages, packageDef)
+		plugins = append(plugins, pluginRef)
 	}
 
 	programJSON["nodes"] = nodes
-	programJSON["packages"] = packages
+	programJSON["plugins"] = plugins
 	return programJSON
 }
 
